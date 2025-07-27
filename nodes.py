@@ -5,6 +5,8 @@ import soundfile as sf
 import numpy as np
 import logging
 import perth
+import re
+from typing import List
 
 import comfy.model_management as mm
 import comfy.model_patcher
@@ -76,6 +78,90 @@ class ChatterboxPatcher(comfy.model_patcher.ModelPatcher):
             mm.soft_empty_cache()
         return super().unpatch_model(device_to, unpatch_weights, *args, **kwargs)
 
+def split_into_chunks(text: str, max_chars: int = 400) -> List[str]:
+    """
+    Split text into chunks with better sentence boundary handling.
+    This improved version avoids splitting words mid-sentence and handles
+    more punctuation for more natural breaks.
+    """
+    if not text or not text.strip():
+        return []
+        
+    text = re.sub(r'\s+', ' ', text.strip())
+    
+    if len(text) <= max_chars:
+        return [text]
+    
+    chunks = []
+    
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    
+    current_chunk = ""
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        
+        if len(current_chunk) + len(sentence) + 1 <= max_chars:
+            current_chunk = f"{current_chunk} {sentence}" if current_chunk else sentence
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            
+            if len(sentence) <= max_chars:
+                current_chunk = sentence
+            else:
+                # Sentence is too long, needs splitting
+                remaining_sentence = sentence
+                while len(remaining_sentence) > max_chars:
+                    # Find the last space to avoid splitting words
+                    split_pos = remaining_sentence.rfind(' ', 0, max_chars)
+                    if split_pos == -1:  # No space found, hard split
+                        split_pos = max_chars
+                    
+                    chunks.append(remaining_sentence[:split_pos].strip())
+                    remaining_sentence = remaining_sentence[split_pos:].strip()
+                current_chunk = remaining_sentence
+    
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    return [c.strip() for c in chunks if c.strip()]
+
+
+def combine_audio_chunks(audio_segments, sample_rate, silence_ms=100):
+    """Combine multiple audio segments with silence between them."""
+    if not audio_segments:
+        # Return a 2D tensor for consistency
+        return torch.zeros((1, 0), dtype=torch.float32)
+
+    # Ensure all segments are 2D
+    processed_segments = []
+    for seg in audio_segments:
+        if seg.dim() == 1:
+            processed_segments.append(seg.unsqueeze(0))
+        elif seg.dim() == 2:
+            processed_segments.append(seg)
+        # Ignore segments with other dimensions or empty tensors
+        
+    if not processed_segments:
+        return torch.zeros((1, 0), dtype=torch.float32)
+
+    if len(processed_segments) == 1:
+        return processed_segments[0]
+
+    silence_samples = int(silence_ms * sample_rate / 1000)
+    device = processed_segments[0].device
+    silence = torch.zeros((1, silence_samples), dtype=torch.float32, device=device)
+    
+    combined_audio = []
+    for i, segment in enumerate(processed_segments):
+        combined_audio.append(segment)
+        if i < len(processed_segments) - 1:
+            combined_audio.append(silence)
+            
+    return torch.cat(combined_audio, dim=1)
+
 class ChatterboxTTSNode:
     @classmethod
     def INPUT_TYPES(cls):
@@ -89,11 +175,6 @@ class ChatterboxTTSNode:
                 "default": "Hello, this is a test of Chatterbox TTS in ComfyUI.",
                 "tooltip": "Text to be synthesized into speech."
             }),
-            "max_new_tokens": ("INT", {
-                "default": 1000, "min": 16, "max": 4000, "step": 8,
-                "tooltip": "Maximum number of audio tokens to generate. 25 tokens ≈ 1 second. The hard limit is 4096 tokens (≈ 163 seconds)."
-            }),
-            "flow_cfg_scale": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05, "tooltip": "CFG scale for the mel spectrogram decoder (flow matching). Higher values increase adherence to content and timbre but may reduce naturalness."}),
             "exaggeration": ("FLOAT", {
                 "default": 0.5, "min": 0.25, "max": 2.0, "step": 0.05,
                 "tooltip": "Controls the expressiveness and emotional intensity. Higher values lead to more exaggerated prosody."
@@ -106,18 +187,6 @@ class ChatterboxTTSNode:
                 "default": 0.5, "min": 0.2, "max": 1.0, "step": 0.05,
                 "tooltip": "Classifier-Free Guidance (CFG) weight. Controls how strongly the model adheres to the text prompt. Higher values may reduce naturalness."
             }),
-            "repetition_penalty": ("FLOAT", {
-                "default": 1.2, "min": 1.0, "max": 2.0, "step": 0.1,
-                "tooltip": "Penalizes repeated tokens to discourage monotonous or repetitive speech. A value of 1.0 means no penalty."
-            }),
-            "min_p": ("FLOAT", {
-                "default": 0.05, "min": 0.0, "max": 1.0, "step": 0.01,
-                "tooltip": "Sets a minimum probability threshold for nucleus sampling (Min-P). Filters out tokens with very low probability."
-            }),
-            "top_p": ("FLOAT", {
-                "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,
-                "tooltip": "Nucleus sampling (Top-P) parameter. The model samples from the smallest set of tokens whose cumulative probability exceeds this value."
-            }),
             "seed": ("INT", {
                 "default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True,
                 "tooltip": "Seed for random number generation. A value of 0 will use a random seed."
@@ -126,11 +195,16 @@ class ChatterboxTTSNode:
                 "default": False,
                 "tooltip": "Enable or disable the audio watermark. Requires 'resemble-perth' to be installed."
             }),
-        }, "optional": {"audio_prompt": ("AUDIO",),}}
+        }, "optional": {
+                "audio_prompt": ("AUDIO",),
+                "enable_chunking": ("BOOLEAN", {"default": True, "tooltip": "Enable automatic text chunking for long inputs."}),
+                "max_chars_per_chunk": ("INT", {"default": 400, "min": 100, "max": 1000, "step": 50, "tooltip": "Maximum characters per chunk when chunking is enabled."}),
+                "silence_between_chunks_ms": ("INT", {"default": 100, "min": 0, "max": 2000, "step": 25, "tooltip": "Milliseconds of silence to add between audio chunks."}),
+        }}
 
     RETURN_TYPES = ("AUDIO",); RETURN_NAMES = ("audio",); FUNCTION = "synthesize"; CATEGORY = "audio/generation"; OUTPUT_NODE = True
 
-    def synthesize(self, model_pack_name, text, max_new_tokens, flow_cfg_scale, exaggeration, temperature, cfg_weight, repetition_penalty, min_p, top_p, seed, use_watermark, audio_prompt=None):
+    def synthesize(self, model_pack_name, text, exaggeration, temperature, cfg_weight, seed, use_watermark, audio_prompt=None, enable_chunking=True, max_chars_per_chunk=400, silence_between_chunks_ms=100):
         if not text.strip():
             logger.info("Empty text provided, returning silent audio.")
             dummy_sr = 24000; silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
@@ -172,10 +246,8 @@ class ChatterboxTTSNode:
             tts_model.watermarker = TmpDummyWatermarker()
             if is_perth_installed: logger.info("Watermarking disabled by user.")
 
-        wav_tensor_chatterbox = None; audio_prompt_path_temp = None
+        audio_prompt_path_temp = None
         
-        pbar = ProgressBar(max_new_tokens)
-
         try:
             if audio_prompt and audio_prompt.get("waveform") is not None and audio_prompt["waveform"].numel() > 0:
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
@@ -185,19 +257,32 @@ class ChatterboxTTSNode:
                     current_waveform = torch.mean(waveform_cpu, dim=0) if waveform_cpu.shape[0] > 1 else waveform_cpu.squeeze(0)
                     sf.write(audio_prompt_path_temp, current_waveform.numpy().astype(np.float32), sample_rate_in)
 
-            wav_tensor_chatterbox = tts_model.generate(
-                text,
-                audio_prompt_path=audio_prompt_path_temp,
-                exaggeration=exaggeration,
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-                repetition_penalty=repetition_penalty,
-                min_p=min_p,
-                top_p=top_p,
-                pbar=pbar,
-                max_new_tokens=max_new_tokens,
-                flow_cfg_scale=flow_cfg_scale
-            )
+            if enable_chunking and len(text) > max_chars_per_chunk:
+                logger.info(f"Text is long, splitting into chunks of max {max_chars_per_chunk} chars.")
+                chunks = split_into_chunks(text, max_chars=max_chars_per_chunk)
+                audio_segments = []
+                pbar = ProgressBar(len(chunks))
+                for i, chunk in enumerate(chunks):
+                    logger.info(f"Generating audio for chunk {i+1}/{len(chunks)}...")
+                    wav_chunk = tts_model.generate(
+                        chunk,
+                        audio_prompt_path=audio_prompt_path_temp,
+                        exaggeration=exaggeration,
+                        temperature=temperature,
+                        cfg_weight=cfg_weight
+                    )
+                    audio_segments.append(wav_chunk.cpu())
+                    pbar.update(1)
+                
+                wav_tensor_chatterbox = combine_audio_chunks(audio_segments, tts_model.sr, silence_between_chunks_ms)
+            else:
+                wav_tensor_chatterbox = tts_model.generate(
+                    text,
+                    audio_prompt_path=audio_prompt_path_temp,
+                    exaggeration=exaggeration,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight
+                )
         except Exception as e:
             logger.error(f"Error during TTS generation: {e}", exc_info=True)
             dummy_sr = 24000; silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
