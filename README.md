@@ -11,7 +11,7 @@
   <h3 align="center">ComfyUI Chatterbox</h3>
 
   <p align="center">
-    High-quality Text-to-Speech (TTS) and Voice Conversion (VC) nodes for ComfyUI, powered by Resemble AI's Chatterbox model.
+    High-quality Text-to-Speech (TTS) and Voice Conversion (VC) nodes for ComfyUI, powered by Resemble AI's Chatterbox model. Unlimited generation length.
     <br />
     <br />
     <a href="https://github.com/wildminder/ComfyUI-Chatterbox/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
