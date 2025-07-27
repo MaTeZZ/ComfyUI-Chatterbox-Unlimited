@@ -8,7 +8,7 @@
     <img src="./workflow-examples/ChatterboxTTS-workflow.png" alt="Chatterbox Nodes in ComfyUI">
   </a>
 
-  <h3 align="center">ComfyUI Chatterbox</h3>
+  <h3 align="center">ComfyUI Chatterbox Unlimited</h3>
 
   <p align="center">
     High-quality Text-to-Speech (TTS) and Voice Conversion (VC) nodes for ComfyUI, powered by Resemble AI's Chatterbox model. Unlimited generation length.
