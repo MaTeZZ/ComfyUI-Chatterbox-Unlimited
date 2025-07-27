@@ -73,7 +73,7 @@ ComfyUI custom nodes for the powerful [Resemble AI Chatterbox](https://github.co
 
 ### Features
 
-*   **Long generation:** No longer limited to 40 seconds.
+*   **Long generation:** Unlimited
 *   **Chatterbox TTS Node:** Synthesize speech from text with optional voice cloning from an audio prompt.
 *   **Chatterbox Voice Conversion Node:** Convert the voice in a source audio file to a target voice.
 *   **Automatic Model Downloading:** Models are automatically downloaded from Hugging Face on first use.
@@ -129,13 +129,13 @@ Load an example workflow from the `workflow-examples/` directory in this reposit
 
 #### Chatterbox TTS 📢 Parameters
   
-  *   **`max_new_tokens`**: Maximum number of audio tokens to generate. Acts as a failsafe against run-on generations. 25 tokens is approximately 1 second of audio. The model's hard limit is 4096 tokens (≈ 163 seconds).
+  *   REMOVED (truly unlimited now): **`max_new_tokens`**: Maximum number of audio tokens to generate. Acts as a failsafe against run-on generations. 25 tokens is approximately 1 second of audio. The model's hard limit is 4096 tokens (≈ 163 seconds).
   *   **`flow_cfg_scale`**: CFG scale for the mel spectrogram decoder. Higher values increase adherence to the text content and speaker timbre but may reduce naturalness.
   *   **`exaggeration`**: Controls the expressiveness and emotional intensity. Higher values lead to more exaggerated prosody.
   *   **`temperature`**: Controls the randomness of the *token sampling* process. Higher values produce more diverse and creative speech, while lower values are more deterministic.
   *   **`cfg_weight`**: Classifier-Free Guidance (CFG) weight for the *token sampling* process.
-  *   **`repetition_penalty`**: Penalizes repeated tokens to discourage monotonous or repetitive speech. `1.0` means no penalty.
-  *   **`min_p` / `top_p`**: Parameters for nucleus sampling, controlling the pool of tokens the model can choose from at each step.
+  *   REMOVED: **`repetition_penalty`**: Penalizes repeated tokens to discourage monotonous or repetitive speech. `1.0` means no penalty.
+  *   REMOVED: **`min_p` / `top_p`**: Parameters for nucleus sampling, controlling the pool of tokens the model can choose from at each step.
   
 
 #### Chatterbox Voice Conversion 🗣️ Parameters
